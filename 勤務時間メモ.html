@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="勤務時間メモ">
+<title>勤務時間メモ</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#f5f5f7;color:#222;font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif}
+header{background:white;padding:calc(16px + env(safe-area-inset-top)) 18px 14px;border-bottom:1px solid #ddd;position:sticky;top:0;z-index:5}
+h1{font-size:22px;margin:0 0 4px}
+.sub{color:#777;font-size:13px}
+main{max-width:650px;margin:auto;padding:16px}
+.card{background:white;border-radius:16px;padding:16px;margin-bottom:14px;box-shadow:0 1px 5px #0000000d}
+.total{font-size:30px;font-weight:700;margin-top:5px}
+label{display:block;font-size:14px;font-weight:600;margin:12px 0 6px}
+input,textarea{width:100%;font-size:17px;padding:12px;border:1px solid #ccc;border-radius:10px;background:#fff}
+textarea{min-height:70px;resize:vertical}
+.row{display:flex;gap:10px}
+.row>div{flex:1}
+button{border:0;border-radius:11px;padding:12px 16px;font-size:16px;font-weight:600;cursor:pointer}
+.primary{background:#111;color:#fff;width:100%;margin-top:14px}
+.secondary{background:#eee;color:#222}
+.danger{background:#ffe7e7;color:#c00}
+.preview{background:#f2f2f7;padding:11px;border-radius:10px;margin-top:10px;color:#444}
+.day{border-top:1px solid #eee;padding:14px 0}
+.day:first-child{border-top:0}
+.dayhead{display:flex;justify-content:space-between;align-items:center;font-weight:700}
+.daytotal{font-size:18px}
+.entry{margin-top:9px;padding:10px 12px;background:#f7f7f8;border-radius:10px}
+.entrytop{display:flex;justify-content:space-between;gap:10px}
+.hours{font-weight:700;white-space:nowrap}
+.memo{color:#555;font-size:14px;margin-top:4px;white-space:pre-wrap}
+.actions{display:flex;gap:6px;margin-top:8px}
+.actions button{padding:7px 10px;font-size:13px}
+.empty{color:#777;text-align:center;padding:25px 5px}
+.monthnav{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.monthnav button{padding:7px 11px}
+.monthtitle{font-weight:700;font-size:18px}
+.small{font-size:12px;color:#888}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<header>
+  <h1>勤務時間メモ</h1>
+  <div class="sub">勤務時間だけでも記録できます</div>
+</header>
+
+<main>
+  <section class="card">
+    <div class="small">今日の合計</div>
+    <div class="total" id="todayTotal">0時間</div>
+  </section>
+
+  <section class="card">
+    <h2 style="font-size:18px;margin:0" id="formTitle">勤務を追加</h2>
+    <input type="hidden" id="editId">
+
+    <label>日付</label>
+    <input type="date" id="date">
+
+    <label>勤務時間 <span style="color:#c00">＊必須</span></label>
+    <div class="row">
+      <div><input type="number" id="hours" min="0" step="0.25" placeholder="例：2"></div>
+      <div style="display:flex;align-items:center;font-size:16px">時間</div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>開始時刻 <span class="small">任意</span></label>
+        <input type="time" id="start">
+      </div>
+      <div>
+        <label>終了時刻 <span class="small">任意</span></label>
+        <input type="time" id="end">
+      </div>
+    </div>
+
+    <div class="preview" id="calcPreview">勤務時間を入力してください</div>
+
+    <label>メモ <span class="small">任意</span></label>
+    <textarea id="memo" placeholder="例：事務作業、授業、求人作成など"></textarea>
+
+    <button class="primary" onclick="saveEntry()">保存</button>
+    <button class="secondary hidden" id="cancelBtn" onclick="cancelEdit()" style="width:100%;margin-top:8px">編集をキャンセル</button>
+  </section>
+
+  <section class="card">
+    <div class="monthnav">
+      <button class="secondary" onclick="changeMonth(-1)">‹</button>
+      <div class="monthtitle" id="monthTitle"></div>
+      <button class="secondary" onclick="changeMonth(1)">›</button>
+    </div>
+    <div id="monthTotal" style="margin-bottom:10px;color:#555"></div>
+    <div id="history"></div>
+  </section>
+</main>
+
+<script>
+const KEY='workTimeMemo_v1';
+let entries=JSON.parse(localStorage.getItem(KEY)||'[]');
+let viewDate=new Date();
+viewDate.setDate(1);
+
+function pad(n){return String(n).padStart(2,'0')}
+function dateStr(d){return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())}
+function fmtHours(h){
+  h=Number(h)||0;
+  if(Number.isInteger(h)) return h+'時間';
+  const mins=Math.round(h*60);
+  if(mins%60===0) return (mins/60)+'時間';
+  if(mins<60) return mins+'分';
+  return Math.floor(mins/60)+'時間'+(mins%60)+'分';
+}
+function save(){localStorage.setItem(KEY,JSON.stringify(entries))}
+function calcFromTimes(){
+  const s=document.getElementById('start').value,e=document.getElementById('end').value;
+  if(!s||!e)return;
+  let [sh,sm]=s.split(':').map(Number),[eh,em]=e.split(':').map(Number);
+  let mins=(eh*60+em)-(sh*60+sm);
+  if(mins<0) mins+=24*60;
+  document.getElementById('hours').value=(mins/60).toFixed(2).replace(/\.00$/,'');
+  updatePreview();
+}
+function updatePreview(){
+  const h=parseFloat(document.getElementById('hours').value);
+  const s=document.getElementById('start').value,e=document.getElementById('end').value;
+  let text=h>0?'勤務時間：'+fmtHours(h):'勤務時間を入力してください';
+  if(s&&e) text+='（'+s+'〜'+e+'）';
+  document.getElementById('calcPreview').textContent=text;
+}
+document.getElementById('start').addEventListener('change',calcFromTimes);
+document.getElementById('end').addEventListener('change',calcFromTimes);
+document.getElementById('hours').addEventListener('input',updatePreview);
+
+function saveEntry(){
+  const date=document.getElementById('date').value;
+  const h=parseFloat(document.getElementById('hours').value);
+  if(!date){alert('日付を入力してください');return}
+  if(!(h>0)){alert('勤務時間を入力してください');return}
+  const obj={
+    id:document.getElementById('editId').value||Date.now().toString(),
+    date,hours:h,
+    start:document.getElementById('start').value,
+    end:document.getElementById('end').value,
+    memo:document.getElementById('memo').value.trim()
+  };
+  const idx=entries.findIndex(x=>x.id===obj.id);
+  if(idx>=0) entries[idx]=obj; else entries.push(obj);
+  save();
+  resetForm();
+  render();
+}
+function editEntry(id){
+  const x=entries.find(e=>e.id===id); if(!x)return;
+  document.getElementById('editId').value=x.id;
+  document.getElementById('date').value=x.date;
+  document.getElementById('hours').value=x.hours;
+  document.getElementById('start').value=x.start||'';
+  document.getElementById('end').value=x.end||'';
+  document.getElementById('memo').value=x.memo||'';
+  document.getElementById('formTitle').textContent='勤務を編集';
+  document.getElementById('cancelBtn').classList.remove('hidden');
+  updatePreview();
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+function deleteEntry(id){
+  if(!confirm('この勤務記録を削除しますか？'))return;
+  entries=entries.filter(e=>e.id!==id);save();render();
+}
+function resetForm(){
+  const d=new Date();
+  document.getElementById('editId').value='';
+  document.getElementById('date').value=dateStr(d);
+  document.getElementById('hours').value='';
+  document.getElementById('start').value='';
+  document.getElementById('end').value='';
+  document.getElementById('memo').value='';
+  document.getElementById('formTitle').textContent='勤務を追加';
+  document.getElementById('cancelBtn').classList.add('hidden');
+  updatePreview();
+}
+function cancelEdit(){resetForm()}
+function changeMonth(n){viewDate.setMonth(viewDate.getMonth()+n);render()}
+function render(){
+  const y=viewDate.getFullYear(),m=viewDate.getMonth();
+  document.getElementById('monthTitle').textContent=y+'年'+(m+1)+'月';
+  const monthEntries=entries.filter(e=>{const d=new Date(e.date+'T00:00:00');return d.getFullYear()===y&&d.getMonth()===m})
+    .sort((a,b)=>a.date.localeCompare(b.date)||a.id.localeCompare(b.id));
+  const total=monthEntries.reduce((a,e)=>a+Number(e.hours),0);
+  document.getElementById('monthTotal').textContent='月間合計：'+fmtHours(total);
+  const groups={};
+  monthEntries.forEach(e=>(groups[e.date]??=[]).push(e));
+  const dates=Object.keys(groups).sort((a,b)=>b.localeCompare(a));
+  const box=document.getElementById('history');
+  if(!dates.length){box.innerHTML='<div class="empty">この月の勤務記録はありません</div>'}
+  else box.innerHTML=dates.map(d=>{
+    const arr=groups[d], t=arr.reduce((a,e)=>a+Number(e.hours),0);
+    const label=new Date(d+'T00:00:00').toLocaleDateString('ja-JP',{month:'numeric',day:'numeric',weekday:'short'});
+    return `<div class="day"><div class="dayhead"><span>${label}</span><span class="daytotal">${fmtHours(t)}</span></div>`+
+      arr.map(e=>`<div class="entry"><div class="entrytop"><span>${e.start&&e.end?e.start+'〜'+e.end:'時間のみ記録'}</span><span class="hours">${fmtHours(e.hours)}</span></div>`+
+      (e.memo?`<div class="memo">${esc(e.memo)}</div>`:'')+
+      `<div class="actions"><button class="secondary" onclick="editEntry('${e.id}')">編集</button><button class="danger" onclick="deleteEntry('${e.id}')">削除</button></div></div>`).join('')+'</div>'
+  }).join('');
+  const today=dateStr(new Date());
+  const todayTotal=entries.filter(e=>e.date===today).reduce((a,e)=>a+Number(e.hours),0);
+  document.getElementById('todayTotal').textContent=fmtHours(todayTotal);
+}
+function esc(s){return s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+resetForm();render();
+</script>
+</body>
+</html>
